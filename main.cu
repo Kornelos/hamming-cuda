@@ -2,12 +2,8 @@
 #include <cstdint>
 #include <random>
 
-#define SEQUENCE_COUNT 20 // > 100000
-#define WARP_SIZE 1
+#define SEQUENCE_COUNT 2 // > 100000
 #define SEQUENCE_LEN 2 // > 1000
-#define COMB_ARR_SZ(count) (count * count * sizeof(bool))
-#define SEQUENCE_BITS_COUNT (SEQUENCE_LEN * 64)
-#define BUCKETS_COUNT (SEQUENCE_BITS_COUNT + 1)
 #define PRINT_PAIRS true
 #define FULL_MASK 0xffffffff
 
@@ -102,11 +98,12 @@ __device__ int getDifference(int x) {
 __global__ void hammingKernel(const int *seqs, const bool *pairs) {
     int result = 0;
     //initial values
-    unsigned int i_one = gridDim.y;
-    unsigned int j_one = gridDim.y + gridDim.x;
+    unsigned int i_one = 0;
+    unsigned int j_one = gridDim.y;
 
-    for (unsigned int i = gridDim.y * SEQUENCE_LEN; i < gridDim.y * SEQUENCE_LEN + SEQUENCE_LEN; i++) {
+    for (unsigned int i = i_one; i < gridDim.y * SEQUENCE_LEN + SEQUENCE_LEN; i++) {
         unsigned int j = gridDim.y + gridDim.x * SEQUENCE_LEN + i;
+        printf("calculating xor of %d and %d values of i=%d j=%d\n",seqs[i],seqs[j],i,j);
         result += seqs[i] ^ seqs[j];
     }
     if (result == 1) {
@@ -118,7 +115,7 @@ __global__ void hammingKernel(const int *seqs, const bool *pairs) {
 
 cudaError_t hammingWithCuda(const int *sequences, bool *pairs) {
     dim3 block(SEQUENCE_LEN, 2);
-    dim3 grid(SEQUENCE_COUNT, SEQUENCE_COUNT);
+    dim3 grid(SEQUENCE_COUNT-1, SEQUENCE_COUNT-1);
 
     hammingKernel<<<grid, block>>>(sequences, pairs);
 

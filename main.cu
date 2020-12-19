@@ -1,26 +1,23 @@
 #include <iostream>
 #include <cstdint>
 #include <random>
+#include <chrono>
+#include <ctime>
 
-#define SEQUENCE_COUNT 8 // > 100000
-#define SEQUENCE_LEN 2 // > 1000
-#define PRINT_PAIRS true
+#define SEQUENCE_COUNT 10000 // > 100000
+#define SEQUENCE_LEN 2 // > 1000 bits
+#define PRINT_PAIRS false
 #define DEBUG false
-//define FULL_MASK 0xffffffff
 
-int randLL() {
+int randWithBitMasking() {
 
-    return random() % 3;
+    return (random() >> 20) & INT32_MAX;
 }
 
 void generateSequences(int *sequences, const int count) {
     for (int i = 0; i < count * SEQUENCE_LEN; i++) {
-        sequences[i] = randLL();
-//        if(i < SEQUENCE_LEN*2-1){
-//            sequences[i] = 1;
-//        } else if(i == SEQUENCE_LEN*2){
-//            sequences[i]=0;
-//        }
+        sequences[i] = randWithBitMasking();
+
     }
 }
 
@@ -32,15 +29,6 @@ int count_setbits(int N) {
     }
     return cnt;
 }
-//bool hasOneBitSet(unsigned int n){
-//    unsigned int count = 0;
-//    while (n) {
-//        count += n & 1;
-//        if(count > 1) return false;
-//        n >>= 1;
-//    }
-//    return count == 1;
-//}
 
 bool hammingDistanceOne(const int *sequences, int i, int j) {
     int hamming = 0;
@@ -92,6 +80,21 @@ void printGeneratedSeqs(const int *seqs) {
         std::cout << std::endl;
     }
 }
+
+void resetPairs(bool *pairs, int count) {
+    for (int i = 0; i < count * count; i++)
+        pairs[i] = false;
+}
+
+void print_timediff(const char* prefix, const struct timespec& start, const
+struct timespec& end)
+{
+    double milliseconds = end.tv_nsec >= start.tv_nsec
+                          ? (end.tv_nsec - start.tv_nsec) / 1e6 + (end.tv_sec - start.tv_sec) * 1e3
+                          : (start.tv_nsec - end.tv_nsec) / 1e6 + (end.tv_sec - start.tv_sec - 1) * 1e3;
+    printf("%s: %lf milliseconds\n", prefix, milliseconds);
+}
+
 //////////////////////////// GPU
 #define checkCuda(ans) { checkCudaError((ans), __LINE__); }
 
@@ -126,6 +129,7 @@ __global__ void hammingKernel(const int *seqs, bool *pairs) {
     int hamming;
 
     if (j >= SEQUENCE_COUNT * SEQUENCE_LEN || i > j) {
+        //discard threads that are out of bounds
         return;
     }
 
@@ -134,8 +138,6 @@ __global__ void hammingKernel(const int *seqs, bool *pairs) {
     printf("BLOCK x=%d y=%d THREAD x=%d y=%d - calculating xor: %d ^ %d = %d values of i=%d j=%d\n",
             blockIdx.x, blockIdx.y,threadIdx.x,threadIdx.y, seqs[i], seqs[j], hamming, i, j);
 #endif
-
-
     //sync all threads in block
     __syncthreads();
     //count all check where hamming == 1
@@ -144,6 +146,7 @@ __global__ void hammingKernel(const int *seqs, bool *pairs) {
     unsigned int hamming_greater = __ballot(hamming > 1);
 
     if (threadIdx.x == 0) {
+        //aggregate solutions on first thread
 #if DEBUG
         printf(
                 "Pair: %d %d and %d %d hamming=%d vote=%d\n",
@@ -171,32 +174,33 @@ cudaError_t hammingWithCuda(const int *sequences, bool *pairs) {
     return cudaSuccess;
 }
 
-void resetPairs(bool *pairs, int count) {
-    for (int i = 0; i < count * count; i++)
-        pairs[i] = false;
-}
-
-
 int main() {
     srandom(0);
     const int count = SEQUENCE_COUNT;
     const int seqlen = SEQUENCE_LEN;
     int *seqs;
     bool *isPair;
+    struct timespec start, end;
     cudaMallocManaged(&seqs, count * seqlen * sizeof(int));
     cudaMallocManaged(&isPair, count * count * sizeof(float));
-
     generateSequences(seqs, count);
+#if DEBUG
     printGeneratedSeqs(seqs);
-
+#endif
 
     std::cout << "----------------Running on CPU..----------------" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &start);
     hammingWithCPU(seqs, isPair, count);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    print_timediff("CPU time: ", start, end);
     printPairs(isPair, seqs);
     resetPairs(isPair, count);
 
     std::cout << "----------------Running on CUDA..----------------" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &start);
     hammingWithCuda(seqs, isPair);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    print_timediff("CUDA time: ", start, end);
     printPairs(isPair, seqs);
 
     //cleanup:

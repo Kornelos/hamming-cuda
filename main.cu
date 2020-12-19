@@ -2,10 +2,10 @@
 #include <cstdint>
 #include <random>
 
-#define SEQUENCE_COUNT 2 // > 100000
+#define SEQUENCE_COUNT 4 // > 100000
 #define SEQUENCE_LEN 2 // > 1000
 #define PRINT_PAIRS true
-#define FULL_MASK 0xffffffff
+//define FULL_MASK 0xffffffff
 
 int randLL() {
 
@@ -51,34 +51,34 @@ void hammingWithCPU(const int *sequences, bool *pairs, int count) {
     }
 }
 
-void printPairCount(const bool *isPair) {
-    int counter = 0;
-    for (int i = 0; i < SEQUENCE_COUNT * SEQUENCE_COUNT; i++) {
-        if (isPair[i]) {
-            counter++;
-        }
-    }
-    std::cout << "Pairs of hamming one count = " << counter << std::endl;
-}
-
 void printPairs(const bool *isPair, const int *seqs) {
     int counter = 0;
     for (int i = 0; i < SEQUENCE_COUNT * SEQUENCE_COUNT; i++) {
         if (isPair[i]) {
             counter++;
-                #if PRINT_PAIRS
-                unsigned int x = i / SEQUENCE_COUNT;
-                unsigned int y = i - x * SEQUENCE_COUNT;
-                printf("-------%d-%d--------\n", y, x);
-                for (int j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[y * SEQUENCE_LEN + j]);
-                printf("\n");
-                for (int j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[x * SEQUENCE_LEN + j]);
-                printf("\n----------------\n\n");
-               #endif
-            }
+#if PRINT_PAIRS
+            unsigned int x = i / SEQUENCE_COUNT;
+            unsigned int y = i - x * SEQUENCE_COUNT;
+            printf("-------%d-%d--------\n", y, x);
+            for (int j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[y * SEQUENCE_LEN + j]);
+            printf("\n");
+            for (int j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[x * SEQUENCE_LEN + j]);
+            printf("\n----------------\n\n");
+#endif
         }
+    }
     std::cout << "Pairs of hamming one count = " << counter << std::endl;
 
+}
+
+void printGeneratedSeqs(const int *seqs) {
+    for (int i = 0; i < SEQUENCE_COUNT; i++) {
+
+        for (int j = 0; j < SEQUENCE_LEN; j++) {
+            std::cout << seqs[i * SEQUENCE_LEN + j] << " ";
+        }
+        std::cout << std::endl;
+    }
 }
 //////////////////////////// GPU
 #define checkCuda(ans) { checkCudaError((ans), __LINE__); }
@@ -89,33 +89,46 @@ void checkCudaError(cudaError_t cudaStatus, int line) {
     }
 }
 
-__device__ int getDifference(int x) {
-    if (!x) return 0;
-    if (!(x & (x - 1))) return 1;
-    return 2;
+__device__ bool hasOneBitSet(unsigned int bits) {
+    return bits & (((bool) (bits & (bits - 1))) - 1);
 }
 
-__global__ void hammingKernel(const int *seqs, const bool *pairs) {
-    int result = 0;
-    //initial values
-    unsigned int i_one = 0;
-    unsigned int j_one = gridDim.y;
-
-    for (unsigned int i = i_one; i < gridDim.y * SEQUENCE_LEN + SEQUENCE_LEN; i++) {
-        unsigned int j = gridDim.y + gridDim.x * SEQUENCE_LEN + i;
-        printf("calculating xor of %d and %d values of i=%d j=%d\n",seqs[i],seqs[j],i,j);
-        result += seqs[i] ^ seqs[j];
+__global__ void hammingKernel(const int *seqs, bool *pairs) {
+    unsigned int i = threadIdx.x + blockIdx.y * SEQUENCE_LEN;
+    unsigned int j = blockIdx.x * SEQUENCE_LEN + SEQUENCE_LEN + i;
+    bool result;
+    if (j > SEQUENCE_COUNT * SEQUENCE_LEN || i > j) {
+        return;
+    } else {
+        result = seqs[i] ^ seqs[j];
+         //printf("BLOCK x=%d y=%d - calculating xor: %d ^ %d = %d values of i=%d j=%d\n", blockIdx.x, blockIdx.y, seqs[i], seqs[j], result, i, j);
     }
-    if (result == 1) {
-        //its a pair yay
-        pairs[i_one * SEQUENCE_COUNT + j_one];
+
+    //sync all threads in block
+    __syncthreads();
+    unsigned int vote_result = __ballot(result);
+
+    if (threadIdx.x == 0) {
+        //printf("Vote result = %d\n",vote_result);
+        printf(
+                "Pair: %d %d and %d %d result=%d vote=%d\n",
+                seqs[blockIdx.x + blockIdx.y * SEQUENCE_LEN],
+                seqs[blockIdx.x + blockIdx.y * SEQUENCE_LEN + 1],
+                seqs[blockIdx.x + (1 + blockIdx.y) * SEQUENCE_LEN],
+                seqs[blockIdx.x + (1 + blockIdx.y) * SEQUENCE_LEN + 1],
+                hasOneBitSet(vote_result),
+                vote_result
+        );
+        if (hasOneBitSet(vote_result)) {
+            pairs[blockIdx.x + blockIdx.y * SEQUENCE_COUNT] = true;
+        }
     }
 }
 
 
 cudaError_t hammingWithCuda(const int *sequences, bool *pairs) {
-    dim3 block(SEQUENCE_LEN, 2);
-    dim3 grid(SEQUENCE_COUNT-1, SEQUENCE_COUNT-1);
+    dim3 block(SEQUENCE_LEN, 1);
+    dim3 grid(SEQUENCE_COUNT - 1, SEQUENCE_COUNT - 1);
 
     hammingKernel<<<grid, block>>>(sequences, pairs);
 
@@ -142,16 +155,16 @@ int main() {
     cudaMallocManaged(&isPair, count * count * sizeof(float));
 
     generateSequences(seqs, count);
-
+    printGeneratedSeqs(seqs);
     /* run calculations */
     std::cout << "----------------Running on CPU..----------------" << std::endl;
     hammingWithCPU(seqs, isPair, count);
-    printPairs(isPair,seqs);
+    printPairs(isPair, seqs);
     resetPairs(isPair, count);
 
     std::cout << "----------------Running on GPU..----------------" << std::endl;
     hammingWithCuda(seqs, isPair);
-    printPairs(isPair,seqs);
+    printPairs(isPair, seqs);
 
     checkCuda(cudaFree(seqs));
     cudaFree(isPair);

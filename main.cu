@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <random>
 
-#define SEQUENCE_COUNT 3 // > 100000
+#define SEQUENCE_COUNT 8 // > 100000
 #define SEQUENCE_LEN 2 // > 1000
 #define PRINT_PAIRS true
 #define DEBUG false
@@ -49,14 +49,14 @@ bool hammingDistanceOne(const int *sequences, int i, int j) {
         // increment by hamming distance of the parts
         hamming += count_setbits(sequences[i * SEQUENCE_LEN + offset] ^ sequences[j * SEQUENCE_LEN + offset]);
         //if greater than one fail fast
-        if(hamming > 1) return false;
+        if (hamming > 1) return false;
     }
     return hamming == 1;
 }
 
 void hammingWithCPU(const int *sequences, bool *pairs, int count) {
     for (int i = 0; i < count; i++) {
-        for (int j = i+1; j < count; j++) {
+        for (int j = i + 1; j < count; j++) {
             if (hammingDistanceOne(sequences, i, j))
                 pairs[i * count + j] = true;
         }
@@ -101,12 +101,11 @@ void checkCudaError(cudaError_t cudaStatus, int line) {
     }
 }
 
-__device__ bool hasOneBitSet(unsigned int n)
-{
+__device__ bool hasOneBitSet(unsigned int n) {
     unsigned int count = 0;
     while (n) {
         count += n & 1;
-        if(count > 1) return false;
+        if (count > 1) return false;
         n >>= 1;
     }
     return count == 1;
@@ -123,18 +122,19 @@ __device__ int count_setbits_dev(int N) {
 
 __global__ void hammingKernel(const int *seqs, bool *pairs) {
     unsigned int i = threadIdx.x + blockIdx.y * SEQUENCE_LEN;
-    unsigned int j = (blockIdx.x+1) * SEQUENCE_LEN + i;
+    unsigned int j = (blockIdx.x + 1) * SEQUENCE_LEN + i;
     int hamming;
 
     if (j >= SEQUENCE_COUNT * SEQUENCE_LEN || i > j) {
         return;
-    } else {
-        hamming = count_setbits_dev(seqs[i] ^ seqs[j]);
-#if DEBUG
-        printf("BLOCK x=%d y=%d THREAD x=%d y=%d - calculating xor: %d ^ %d = %d values of i=%d j=%d\n",
-                blockIdx.x, blockIdx.y,threadIdx.x,threadIdx.y, seqs[i], seqs[j], hamming, i, j);
-#endif
     }
+
+    hamming = count_setbits_dev(seqs[i] ^ seqs[j]);
+#if DEBUG
+    printf("BLOCK x=%d y=%d THREAD x=%d y=%d - calculating xor: %d ^ %d = %d values of i=%d j=%d\n",
+            blockIdx.x, blockIdx.y,threadIdx.x,threadIdx.y, seqs[i], seqs[j], hamming, i, j);
+#endif
+
 
     //sync all threads in block
     __syncthreads();
@@ -156,7 +156,7 @@ __global__ void hammingKernel(const int *seqs, bool *pairs) {
         );
 #endif
         if (hasOneBitSet(vote_result) && hamming_greater == 0) {
-            pairs[blockIdx.y * SEQUENCE_COUNT + blockIdx.y+blockIdx.x+1] = true;
+            pairs[blockIdx.y * SEQUENCE_COUNT + blockIdx.y + blockIdx.x + 1] = true;
         }
     }
 }

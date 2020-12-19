@@ -3,7 +3,7 @@ set(CMAKE_CUDA_COMPILER /usr/local/cuda-11.2/bin/nvcc)
 project(hamming_one CUDA)
 
 set(CMAKE_CUDA_STANDARD 14)
-add_executable(hamming_one main.cu)
+add_executable(hamming_one main.cu hamming_cpu.cpp input_params.h sequence.cu)
 set_target_properties(
         hamming_one
         PROPERTIES

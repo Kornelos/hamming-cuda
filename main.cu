@@ -4,35 +4,38 @@
 #include <chrono>
 #include <ctime>
 
-#define SEQUENCE_COUNT 10000 // > 100000
-#define SEQUENCE_LEN 2 // > 1000 bits
+#define SEQUENCE_COUNT 10000
+#define SEQUENCE_LEN 16
 #define PRINT_PAIRS false
 #define DEBUG false
 
-int randWithBitMasking() {
+std::random_device rd;
+std::mt19937_64 gen(rd());
+std::uniform_int_distribution<uint64_t> dis;
 
-    return (random() >> 20) & INT32_MAX;
+uint64_t randWithBitMasking() {
+    return (dis(gen) >> 62) & UINT64_MAX;
 }
 
-void generateSequences(int *sequences, const int count) {
-    for (int i = 0; i < count * SEQUENCE_LEN; i++) {
+void generateSequences(uint64_t *sequences, const uint64_t count) {
+    for (uint64_t i = 0; i < count * SEQUENCE_LEN; i++) {
         sequences[i] = randWithBitMasking();
 
     }
 }
 
-void printPairs(const bool *isPair, const int *seqs) {
-    int counter = 0;
-    for (int i = 0; i < SEQUENCE_COUNT * SEQUENCE_COUNT; i++) {
+void printPairs(const bool *isPair, const uint64_t *seqs, const uint64_t count) {
+    uint64_t counter = 0;
+    for (uint64_t i = 0; i < count * count; i++) {
         if (isPair[i]) {
             counter++;
 #if PRINT_PAIRS
-            unsigned int x = i / SEQUENCE_COUNT;
-            unsigned int y = i - x * SEQUENCE_COUNT;
+            unsigned long x = i / SEQUENCE_COUNT;
+            unsigned long y = i - x * SEQUENCE_COUNT;
             printf("-------%d-%d--------\n", y, x);
-            for (int j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[y * SEQUENCE_LEN + j]);
+            for (long j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[y * SEQUENCE_LEN + j]);
             printf("\n");
-            for (int j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[x * SEQUENCE_LEN + j]);
+            for (long j = 0; j < SEQUENCE_LEN; j++) printf("%d ", seqs[x * SEQUENCE_LEN + j]);
             printf("\n----------------\n\n");
 #endif
         }
@@ -41,24 +44,22 @@ void printPairs(const bool *isPair, const int *seqs) {
 
 }
 
-void printGeneratedSeqs(const int *seqs) {
-    for (int i = 0; i < SEQUENCE_COUNT; i++) {
+void printGeneratedSeqs(const uint64_t *seqs) {
+    for (uint64_t i = 0; i < SEQUENCE_COUNT; i++) {
 
-        for (int j = 0; j < SEQUENCE_LEN; j++) {
+        for (uint64_t j = 0; j < SEQUENCE_LEN; j++) {
             std::cout << seqs[i * SEQUENCE_LEN + j] << " ";
         }
         std::cout << std::endl;
     }
 }
 
-void resetPairs(bool *pairs, int count) {
-    for (int i = 0; i < count * count; i++)
+void resetPairs(bool *pairs, uint64_t count) {
+    for (long i = 0; i < count * count; i++)
         pairs[i] = false;
 }
 
-void print_timediff(const char* prefix, const struct timespec& start, const
-struct timespec& end)
-{
+void print_timediff(const char *prefix, const struct timespec &start, const struct timespec &end) {
     double milliseconds = end.tv_nsec >= start.tv_nsec
                           ? (end.tv_nsec - start.tv_nsec) / 1e6 + (end.tv_sec - start.tv_sec) * 1e3
                           : (start.tv_nsec - end.tv_nsec) / 1e6 + (end.tv_sec - start.tv_sec - 1) * 1e3;
@@ -67,8 +68,8 @@ struct timespec& end)
 
 ///////////////////////////// CPU
 
-int count_setbits(int N) {
-    int cnt = 0;
+long count_setbits(uint64_t N) {
+    long cnt = 0;
     while (N > 0) {
         cnt += N & 1;
         N = N >> 1;
@@ -76,10 +77,10 @@ int count_setbits(int N) {
     return cnt;
 }
 
-bool hammingDistanceOne(const int *sequences, int i, int j) {
-    int hamming = 0;
+bool hammingDistanceOne(const uint64_t *sequences, int i, int j) {
+    long hamming = 0;
     // sum hamming distance for each sequence part
-    for (int offset = 0; offset < SEQUENCE_LEN; offset++) {
+    for (long offset = 0; offset < SEQUENCE_LEN; offset++) {
         // increment by hamming distance of the parts
         hamming += count_setbits(sequences[i * SEQUENCE_LEN + offset] ^ sequences[j * SEQUENCE_LEN + offset]);
         //if greater than one fail fast
@@ -88,9 +89,9 @@ bool hammingDistanceOne(const int *sequences, int i, int j) {
     return hamming == 1;
 }
 
-void hammingWithCPU(const int *sequences, bool *pairs, int count) {
-    for (int i = 0; i < count; i++) {
-        for (int j = i + 1; j < count; j++) {
+void hammingWithCPU(const uint64_t *sequences, bool *pairs, long count) {
+    for (long i = 0; i < count; i++) {
+        for (long j = i + 1; j < count; j++) {
             if (hammingDistanceOne(sequences, i, j))
                 pairs[i * count + j] = true;
         }
@@ -106,8 +107,8 @@ void checkCudaError(cudaError_t cudaStatus, int line) {
     }
 }
 
-__device__ bool hasOneBitSet(unsigned int n) {
-    unsigned int count = 0;
+__device__ bool hasOneBitSet(uint64_t n) {
+    unsigned long count = 0;
     while (n) {
         count += n & 1;
         if (count > 1) return false;
@@ -116,8 +117,8 @@ __device__ bool hasOneBitSet(unsigned int n) {
     return count == 1;
 }
 
-__device__ int count_setbits_dev(int N) {
-    int cnt = 0;
+__device__ long count_setbits_dev(uint64_t N) {
+    long cnt = 0;
     while (N > 0) {
         cnt += N & 1;
         N = N >> 1;
@@ -125,10 +126,10 @@ __device__ int count_setbits_dev(int N) {
     return cnt;
 }
 
-__global__ void hammingKernel(const int *seqs, bool *pairs) {
+__global__ void hammingKernel(const uint64_t *seqs, bool *pairs) {
     unsigned int i = threadIdx.x + blockIdx.y * SEQUENCE_LEN;
     unsigned int j = (blockIdx.x + 1) * SEQUENCE_LEN + i;
-    int hamming;
+    long hamming;
 
     if (j >= SEQUENCE_COUNT * SEQUENCE_LEN || i > j) {
         //discard threads that are out of bounds
@@ -167,7 +168,7 @@ __global__ void hammingKernel(const int *seqs, bool *pairs) {
 }
 
 
-cudaError_t hammingWithCuda(const int *sequences, bool *pairs) {
+cudaError_t hammingWithCuda(const uint64_t *sequences, bool *pairs) {
     dim3 block(SEQUENCE_LEN, 1);
     dim3 grid(SEQUENCE_COUNT - 1, SEQUENCE_COUNT - 1);
     hammingKernel<<<grid, block>>>(sequences, pairs);
@@ -175,36 +176,77 @@ cudaError_t hammingWithCuda(const int *sequences, bool *pairs) {
     checkCuda(cudaDeviceSynchronize());
     return cudaSuccess;
 }
+/////////////////////////////////////////////// NEW GPU
+__global__ void hammingKernelLin(const uint64_t *seqs, bool *pairs, uint *counter) {
+    uint blockId = blockIdx.x + blockIdx.y * gridDim.x;
+    uint threadId = blockId * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x;
+    // first number copy for fast access
+    uint64_t fst[SEQUENCE_LEN];
+    for (uint i = 0; i < SEQUENCE_LEN; i++){
+        fst[i] = seqs[threadId*SEQUENCE_LEN+i];
+    }
+
+    for(uint i = threadId+1; i<SEQUENCE_COUNT; i++){
+        long hamming = 0;
+        for(uint j=0;j<SEQUENCE_LEN;j++){
+            hamming += count_setbits_dev(fst[j] ^ seqs[j+i*SEQUENCE_LEN]);
+        }
+        if(hamming == 1){
+         //   pairs[threadId*SEQUENCE_COUNT+i] = true;
+            atomicInc(counter,UINT32_MAX);
+        }
+    }
+}
+
+cudaError_t hammingWithCudaLin(const uint64_t *seqs, bool *pairs) {
+    dim3 block(32, 4);
+    dim3 grid(block.x * block.y, ceil((double) SEQUENCE_COUNT / (block.x * block.y)));
+    uint *h_counter;
+    cudaMallocManaged(&h_counter,sizeof(uint));
+    hammingKernelLin<<<grid, block>>>(seqs, pairs,h_counter);
+    checkCuda(cudaGetLastError());
+    checkCuda(cudaDeviceSynchronize());
+    printf("count: %d\n", *h_counter);
+    checkCuda(cudaFree(h_counter));
+    return cudaSuccess;
+}
 
 int main() {
     srandom(0);
-    const int count = SEQUENCE_COUNT;
-    const int seqlen = SEQUENCE_LEN;
-    int *seqs;
+    const uint64_t count = SEQUENCE_COUNT;
+    const uint64_t seqlen = SEQUENCE_LEN;
+    uint64_t *seqs;
     bool *isPair;
     struct timespec start, end;
-    cudaMallocManaged(&seqs, count * seqlen * sizeof(int));
-    cudaMallocManaged(&isPair, count * count * sizeof(float));
+    cudaMallocManaged(&seqs, count * seqlen * sizeof(uint64_t));
+    cudaMallocManaged(&isPair, count * count * sizeof(bool));
     generateSequences(seqs, count);
 #if DEBUG
     printGeneratedSeqs(seqs);
 #endif
 
     std::cout << "----------------Running on CPU..----------------" << std::endl;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    hammingWithCPU(seqs, isPair, count);
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    print_timediff("CPU time: ", start, end);
-    printPairs(isPair, seqs);
-    resetPairs(isPair, count);
+//    clock_gettime(CLOCK_MONOTONIC, &start);
+//    hammingWithCPU(seqs, isPair, count);
+//    clock_gettime(CLOCK_MONOTONIC, &end);
+//    print_timediff("CPU time: ", start, end);
+//    printPairs(isPair, seqs, count);
+//    resetPairs(isPair, count);
 
-    std::cout << "----------------Running on CUDA..----------------" << std::endl;
+    std::cout << "----------------Running on CUDA (Not optimal)..----------------" << std::endl;
     clock_gettime(CLOCK_MONOTONIC, &start);
     hammingWithCuda(seqs, isPair);
     clock_gettime(CLOCK_MONOTONIC, &end);
     print_timediff("CUDA time: ", start, end);
-    printPairs(isPair, seqs);
+    printPairs(isPair, seqs, count);
+    resetPairs(isPair, count);
 
+    std::cout << "------------- New CUDA ---------------------------" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    hammingWithCudaLin(seqs, isPair);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    print_timediff("CUDA time: ", start, end);
+   // printPairs(isPair, seqs, count);
     //cleanup:
     checkCuda(cudaFree(seqs));
     checkCuda(cudaFree(isPair));

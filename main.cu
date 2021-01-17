@@ -4,8 +4,9 @@
 #include <chrono>
 #include <ctime>
 
-#define SEQUENCE_COUNT 10000
-#define SEQUENCE_LEN 16
+// control variables
+#define SEQUENCE_COUNT 4000
+#define SEQUENCE_LEN 8
 #define PRINT_PAIRS false
 #define DEBUG false
 
@@ -98,7 +99,7 @@ void hammingWithCPU(const uint64_t *sequences, bool *pairs, long count) {
     }
 }
 
-//////////////////////////// GPU
+//////////////////////////// GPU (NOT OPTIMAL)
 #define checkCuda(ans) { checkCudaError((ans), __LINE__); }
 
 void checkCudaError(cudaError_t cudaStatus, int line) {
@@ -171,15 +172,17 @@ __global__ void hammingKernel(const uint64_t *seqs, bool *pairs) {
 cudaError_t hammingWithCuda(const uint64_t *sequences, bool *pairs) {
     dim3 block(SEQUENCE_LEN, 1);
     dim3 grid(SEQUENCE_COUNT - 1, SEQUENCE_COUNT - 1);
+
     hammingKernel<<<grid, block>>>(sequences, pairs);
     checkCuda(cudaGetLastError());
     checkCuda(cudaDeviceSynchronize());
     return cudaSuccess;
 }
 /////////////////////////////////////////////// NEW GPU
-__global__ void hammingKernelLin(const uint64_t *seqs, bool *pairs, uint *counter) {
+__global__ void hammingKernelLin(const uint64_t *seqs, bool *pairs) {
     uint blockId = blockIdx.x + blockIdx.y * gridDim.x;
     uint threadId = blockId * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x;
+
     // first number copy for fast access
     uint64_t fst[SEQUENCE_LEN];
     for (uint i = 0; i < SEQUENCE_LEN; i++){
@@ -192,22 +195,17 @@ __global__ void hammingKernelLin(const uint64_t *seqs, bool *pairs, uint *counte
             hamming += count_setbits_dev(fst[j] ^ seqs[j+i*SEQUENCE_LEN]);
         }
         if(hamming == 1){
-         //   pairs[threadId*SEQUENCE_COUNT+i] = true;
-            atomicInc(counter,UINT32_MAX);
+            pairs[threadId*SEQUENCE_COUNT+i] = true;
         }
     }
 }
 
-cudaError_t hammingWithCudaLin(const uint64_t *seqs, bool *pairs) {
+cudaError_t hammingWithCudaLin(const uint64_t *seqs, bool *pairs, uint64_t count) {
     dim3 block(32, 4);
     dim3 grid(block.x * block.y, ceil((double) SEQUENCE_COUNT / (block.x * block.y)));
-    uint *h_counter;
-    cudaMallocManaged(&h_counter,sizeof(uint));
-    hammingKernelLin<<<grid, block>>>(seqs, pairs,h_counter);
+    hammingKernelLin<<<grid, block>>>(seqs, pairs);
     checkCuda(cudaGetLastError());
     checkCuda(cudaDeviceSynchronize());
-    printf("count: %d\n", *h_counter);
-    checkCuda(cudaFree(h_counter));
     return cudaSuccess;
 }
 
@@ -226,14 +224,14 @@ int main() {
 #endif
 
     std::cout << "----------------Running on CPU..----------------" << std::endl;
-//    clock_gettime(CLOCK_MONOTONIC, &start);
-//    hammingWithCPU(seqs, isPair, count);
-//    clock_gettime(CLOCK_MONOTONIC, &end);
-//    print_timediff("CPU time: ", start, end);
-//    printPairs(isPair, seqs, count);
-//    resetPairs(isPair, count);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    hammingWithCPU(seqs, isPair, count);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    print_timediff("CPU time: ", start, end);
+    printPairs(isPair, seqs, count);
+    resetPairs(isPair, count);
 
-    std::cout << "----------------Running on CUDA (Not optimal)..----------------" << std::endl;
+    std::cout << "----------------Running on CUDA (Not optimal, thread per two vectors)..----------------" << std::endl;
     clock_gettime(CLOCK_MONOTONIC, &start);
     hammingWithCuda(seqs, isPair);
     clock_gettime(CLOCK_MONOTONIC, &end);
@@ -241,12 +239,12 @@ int main() {
     printPairs(isPair, seqs, count);
     resetPairs(isPair, count);
 
-    std::cout << "------------- New CUDA ---------------------------" << std::endl;
+    std::cout << "------------- New CUDA (thread for one vector comparing with all others).. ------------" << std::endl;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    hammingWithCudaLin(seqs, isPair);
+    hammingWithCudaLin(seqs, isPair,count);
     clock_gettime(CLOCK_MONOTONIC, &end);
     print_timediff("CUDA time: ", start, end);
-   // printPairs(isPair, seqs, count);
+    printPairs(isPair, seqs, count);
     //cleanup:
     checkCuda(cudaFree(seqs));
     checkCuda(cudaFree(isPair));
